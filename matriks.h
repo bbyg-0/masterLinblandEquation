@@ -8,4 +8,9 @@
 
 void matriks_perkalikan_avx2(const float *__restrict A, const float *__restrict B, float *__restrict Hasil);
 
+void matriks_komutator_avx2(const float *__restrict A, const float *__restrict B, float *__restrict Hasil) {
+
+void matriks_anticomutator_avx2(const float *__restrict A, const float *__restrict B, float *__restrict Hasil) {
+
+
 #endif
