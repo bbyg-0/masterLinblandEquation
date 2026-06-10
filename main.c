@@ -1,146 +1,204 @@
-#include <stdio.h>
-#include <stdlib.h>
-#include <unistd.h>
-#include <getopt.h>
-#include <string.h>
+#include "simple_tensor.h"
+#include "matrix_operations.h"
 
-#include <immintrin.h>
-
-#include <ctype.h>
-
-#include "matriks.h"
-
-#define MAX_GANGGUAN 100
-
-// Struktur data untuk menyimpan konfigurasi setiap gangguan yang diparsing
-typedef struct {
-    int qubit_idx;      // Qubit ke berapa (0 to n)
-    char jenis_gangguan;// Jenis operator ('a', 'b', 'c', dst)
-    float nilai_gamma;  // Nilai float untuk gamma
-} GangguanKuantum;
-
-void cetak_panduan(char *nama_program) {
-    printf("Penggunaan: %s [FLAGS]\n", nama_program);
-    printf("Flags yang tersedia:\n");
-    printf("  -q, --qubit     Jumlah qubit (Default: 1)\n");
-    printf("  -w, --omega     Nilai kekuatan kopling Omega (Default: 1.0)\n");
-    printf("  -e, --energy    Nilai energi Detuning E (Default: 0.0)\n");
-    printf("  -d, --disturb   Detail gangguan dengan format [Qubit][Jenis][Gamma]\n");
-    printf("                  Contoh: -d 0a0.15 -d 1b0.05\n");
-    printf("                  (a: Emission, b: Dephasing, c: Pumping)\n");
-    printf("  -h, --help      Menampilkan panduan ini\n");
-}
-
-int main(int argc, char *argv[]) {
-    // 1. Inisialisasi Nilai Default
-    int jumlah_qubit = 1;
-    float omega = 1.0f;
-    float detuning_E = 0.0f;
-
-    // Array untuk menampung daftar gangguan dari user
-    GangguanKuantum daftar_gangguan[MAX_GANGGUAN];
-    int total_gangguan = 0;
-
-    // 2. Definisi Flags Panjang
-    static struct option long_options[] = {
-        {"qubit",   required_argument, 0, 'q'},
-        {"omega",   required_argument, 0, 'w'},
-        {"energy",  required_argument, 0, 'e'},
-        {"disturb", required_argument, 0, 'd'},
-        {"help",    no_argument,       0, 'h'},
-        {0, 0, 0, 0}
-    };
-
-    int opt;
-    int option_index = 0;
-
-    // 3. Loop Membaca Flags
-    // Menambahkan "d:" pada optstring untuk menerima argumen gangguan
-    while ((opt = getopt_long(argc, argv, "q:w:e:d:h", long_options, &option_index)) != -1) {
-        switch (opt) {
-            case 'q':
-                jumlah_qubit = atoi(optarg);
-                break;
-            case 'w':
-                omega = atof(optarg);
-                break;
-            case 'e':
-                detuning_E = atof(optarg);
-                break;
-	    case 'd':
-                if (total_gangguan < MAX_GANGGUAN) {
-                    char *input = optarg;
-                    
-                    // TRANSLASI KRUSIAL:
-                    // Ambil angka urutan manusia (1-9), lalu kurangi 1 
-                    // agar menjadi indeks komputer (0-8)
-                    int urutan_manusia = input[0] - '0'; 
-                    daftar_gangguan[total_gangguan].qubit_idx = urutan_manusia - 1;
-                    
-                    // Karakter ke-1 dan seterusnya tetap sama
-                    daftar_gangguan[total_gangguan].jenis_gangguan = input[1];
-                    daftar_gangguan[total_gangguan].nilai_gamma = atof(&input[2]);
-                    
-                    total_gangguan++;
+int main(int argc, char* argv[]) {
+    LindbladConfig config;
+    const char* config_file = (argc > 1) ? argv[1] : "config.json";
+    
+    printf("\n========================================\n");
+    printf("LINDBLAD MASTER EQUATION SIMULATION\n");
+    printf("========================================\n");
+    
+    /* Load configuration */
+    if (load_config_from_json(config_file, &config) != 0) {
+        if (load_config_from_file(config_file, &config) != 0) {
+            printf("WARNING: Could not load configuration from %s\n", config_file);
+            printf("Using default configuration...\n\n");
+            
+            /* Create default configuration */
+            config.num_qubits = 2;
+            init_all_qubits_default(&config);
+            config.qubits[0].omega = 1.5;
+            config.qubits[0].E = 0.8;
+            config.qubits[1].omega = 2.3;
+            config.qubits[1].E = 1.2;
+            config.num_disturbances = 0;
+        }
+    }
+    
+    /* Print configuration */
+    print_config(&config);
+    
+    /* Create Hamiltonian */
+    float* omegas = (float*)malloc(config.num_qubits * sizeof(float));
+    float* Es = (float*)malloc(config.num_qubits * sizeof(float));
+    
+    for (int i = 0; i < config.num_qubits; i++) {
+        omegas[i] = config.qubits[i].omega;
+        Es[i] = config.qubits[i].E;
+    }
+    
+    Complex* H = create_hamiltonian(omegas, Es, config.num_qubits);
+    int dim = 1 << config.num_qubits;
+    
+    printf("\n=== SYSTEM HAMILTONIAN ===\n");
+    print_matrix(H, dim, "Hamiltonian H");
+    
+    /* Check if Hamiltonian is Hermitian */
+    if (is_hermitian(H, dim, 1e-6)) {
+        printf("✓ Hamiltonian is Hermitian (valid)\n");
+    } else {
+        printf("✗ Hamiltonian is NOT Hermitian (invalid)\n");
+    }
+    
+    /* Create full density matrix from initial states */
+    Complex* rho = create_full_density_matrix(&config);
+    printf("\n=== INITIAL DENSITY MATRIX ===\n");
+    print_matrix(rho, dim, "ρ(0)");
+    
+    /* Verify trace of density matrix = 1 */
+    float trace = 0;
+    for (int i = 0; i < dim; i++) {
+        trace += rho[i * dim + i].real;
+    }
+    printf("Trace of ρ(0) = %.6f (should be 1.0)\n", trace);
+    
+    /* Compute Lindblad term: -i[H, ρ] */
+    Complex* H_rho_comm = (Complex*)calloc(dim * dim, sizeof(Complex));
+    Complex* lindblad_term = (Complex*)calloc(dim * dim, sizeof(Complex));
+    
+    commutator(H, rho, H_rho_comm, dim);
+    matrix_scale(H_rho_comm, 0, -1, lindblad_term, dim);
+    
+    printf("\n=== LINDBLAD EVOLUTION TERM ===\n");
+    printf("dρ/dt = -i[H, ρ] + Σ γ_k (L_k ρ L_k† - ½{L_k†L_k, ρ})\n\n");
+    print_matrix(lindblad_term, dim, "-i[H, ρ]");
+    
+    /* Process disturbances (Lindblad operators) */
+    Complex* dissipator = NULL;
+    
+    if (config.num_disturbances > 0) {
+        printf("\n=== LINDBLAD DISSIPATORS ===\n");
+        
+        /* Create full dissipator term */
+        dissipator = (Complex*)calloc(dim * dim, sizeof(Complex));
+        
+        for (int d = 0; d < config.num_disturbances; d++) {
+            Disturbance* dist = &config.disturbances[d];
+            printf("\nDisturbance %d: Qubit %d, Type: %s, γ = %.4f\n", 
+                   d, dist->qubit_index, disturbance_type_to_string(dist->type), dist->gamma);
+            
+            /* Create Lindblad operator L for this disturbance */
+            Complex* L = create_lindblad_operator(dist->type, dist->qubit_index, config.num_qubits);
+            
+            if (L) {
+                /* Compute L ρ L† */
+                Complex* Lrho = (Complex*)calloc(dim * dim, sizeof(Complex));
+                Complex* LrhoLdagger = (Complex*)calloc(dim * dim, sizeof(Complex));
+                Complex* Ldagger = (Complex*)calloc(dim * dim, sizeof(Complex));
+                
+                /* Create L† */
+                for (int i = 0; i < dim * dim; i++) {
+                    Ldagger[i].real = L[i].real;
+                    Ldagger[i].imag = -L[i].imag;
                 }
-                break;
-            case 'h':
-                cetak_panduan(argv[0]);
-                return 0;
-            default:
-                cetak_panduan(argv[0]);
-                return 1;
+                
+                /* Compute L ρ */
+                matrix_multiply(L, rho, Lrho, dim);
+                
+                /* Compute (L ρ) L† */
+                matrix_multiply(Lrho, Ldagger, LrhoLdagger, dim);
+                
+                /* Compute L†L */
+                Complex* LdaggerL = (Complex*)calloc(dim * dim, sizeof(Complex));
+                matrix_multiply(Ldagger, L, LdaggerL, dim);
+                
+                /* Compute {L†L, ρ} */
+                Complex* anticommutator_result = (Complex*)calloc(dim * dim, sizeof(Complex));
+                anticommutator(LdaggerL, rho, anticommutator_result, dim);
+                
+                /* Compute ½{L†L, ρ} */
+                Complex* half_anticommutator = (Complex*)calloc(dim * dim, sizeof(Complex));
+                matrix_scale(anticommutator_result, 0.5, 0, half_anticommutator, dim);
+                
+                /* Compute D = γ (LρL† - ½{L†L, ρ}) */
+                Complex* D = (Complex*)calloc(dim * dim, sizeof(Complex));
+                matrix_subtract(LrhoLdagger, half_anticommutator, D, dim);
+                matrix_scale(D, dist->gamma, 0, D, dim);
+                
+                /* Add to total dissipator */
+                for (int i = 0; i < dim * dim; i++) {
+                    dissipator[i].real += D[i].real;
+                    dissipator[i].imag += D[i].imag;
+                }
+                
+                printf("  Added dissipator term with γ = %.4f\n", dist->gamma);
+                
+                /* Clean up */
+                free(L);
+                free(Lrho);
+                free(LrhoLdagger);
+                free(Ldagger);
+                free(LdaggerL);
+                free(anticommutator_result);
+                free(half_anticommutator);
+                free(D);
+            }
         }
+        
+        printf("\n=== TOTAL DISSIPATOR ===\n");
+        print_matrix(dissipator, dim, "Σ γ_k (L_k ρ L_k† - ½{L_k†L_k, ρ})");
+    } else {
+        printf("\nNo disturbances specified.\n");
+        printf("Evolution is unitary: dρ/dt = -i[H, ρ]\n");
     }
-
-    // 4. Validasi Hasil Input Gangguan terhadap Jumlah Qubit
-    for (int i = 0; i < total_gangguan; i++) {
-        // Jika indeks komputer kurang dari 0 atau melebihi (jumlah_qubit - 1)
-        if (daftar_gangguan[i].qubit_idx >= jumlah_qubit || daftar_gangguan[i].qubit_idx < 0) {
-            fprintf(stderr, "Error: Anda ingin mengganggu Qubit ke-%d, tetapi Anda hanya mensimulasikan %d qubit.\n", 
-                    daftar_gangguan[i].qubit_idx + 1, jumlah_qubit); // Ditambah 1 saat dicetak ke user
-            return 1;
-        }
-    }
-
-    // 5. Tampilkan Parameter yang Berhasil Diterima
-    printf("=== PARAMETER SIMULASI KUANTUM ===\n");
-    printf("Jumlah Qubit : %d\n", jumlah_qubit);
-    printf("Nilai Omega  : %.4f\n", omega);
-    printf("Nilai E      : %.4f\n", detuning_E);
-    printf("Total Efek Lingkungan Aktif: %d\n", total_gangguan);
     
-    for (int i = 0; i < total_gangguan; i++) {
-        char *nama_efek = "Tidak Diketahui";
-        if (daftar_gangguan[i].jenis_gangguan == 'a') nama_efek = "Spontaneous Emission (Sigma-)";
-        if (daftar_gangguan[i].jenis_gangguan == 'b') nama_efek = "Dephasing (Sigma_Z)";
-        if (daftar_gangguan[i].jenis_gangguan == 'c') nama_efek = "Incoherent Pumping (Sigma+)";
-
-        printf("  -> Kebocoran pada Qubit [%d] | Jenis: %s | Gamma: %.4f\n", 
-               daftar_gangguan[i].qubit_idx, nama_efek, daftar_gangguan[i].nilai_gamma);
-    }
-
-    float A[N * N];
-    float B[N * N];
-    float Hasil[N * N];
-
-    // Mengisi data dummy untuk matriks A dan B
-    for (int i = 0; i < N * N; i++) {
-        A[i] = 1.0f; // Semua elemen A bernilai 1
-        B[i] = 2.0f; // Semua elemen B bernilai 2
-        Hasil[i] = 0.0f;
-    }
-
-    printf("Menghitung perkalian matriks 8x8 dengan AVX2 + FMA...\n\n");
+    /* Total evolution: dρ/dt = -i[H, ρ] + dissipator */
+    Complex* drho_dt = (Complex*)calloc(dim * dim, sizeof(Complex));
     
-    // Jalankan fungsi optimasi hardware
-    matriks_perkalikan_avx2(A, B, Hasil);
-
-    // Cetak sebagian hasil (Baris pertama saja untuk pembuktian)
-    printf("Hasil Baris Pertama (Indeks 0-7):\n");
-    for (int j = 0; j < N; j++) {
-        printf("%.1f ", Hasil[0 * N + j]);
+    if (dissipator) {
+        matrix_add(lindblad_term, dissipator, drho_dt, dim);
+        printf("\n=== TOTAL EVOLUTION ===\n");
+        print_matrix(drho_dt, dim, "dρ/dt");
+    } else {
+        matrix_copy(lindblad_term, drho_dt, dim);
     }
-    printf("\n\n(Ekspektasi jika semua A=1 dan B=2 dikali matriks 8x8 adalah 1*2*8 = 16.0)\n");
+    
+    /* Simple Euler step example */
+    float dt = 0.01;
+    Complex* rho_next = (Complex*)calloc(dim * dim, sizeof(Complex));
+    
+    /* rho_next = rho + dt * drho_dt */
+    for (int i = 0; i < dim * dim; i++) {
+        rho_next[i].real = rho[i].real + dt * drho_dt[i].real;
+        rho_next[i].imag = rho[i].imag + dt * drho_dt[i].imag;
+    }
+    
+    printf("\n=== TIME EVOLUTION (Euler step, dt = %.3f) ===\n", dt);
+    printf("ρ(t+dt) = ρ(t) + dt * dρ/dt\n");
+    print_matrix(rho_next, dim, "ρ(t+dt)");
+    
+    /* Verify trace preservation */
+    float new_trace = 0;
+    for (int i = 0; i < dim; i++) {
+        new_trace += rho_next[i * dim + i].real;
+    }
+    printf("Trace after evolution = %.6f (should still be 1.0)\n", new_trace);
+    
+    /* Cleanup */
+    free(omegas);
+    free(Es);
+    free_matrix(H);
+    free_matrix(rho);
+    free(H_rho_comm);
+    free(lindblad_term);
+    if (dissipator) free(dissipator);
+    free(drho_dt);
+    free(rho_next);
+    
+    printf("\n========================================\n");
+    printf("SIMULATION SETUP COMPLETE\n");
+    printf("========================================\n");
+    
     return 0;
 }
