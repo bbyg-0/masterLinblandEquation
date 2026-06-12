@@ -10,12 +10,12 @@ $(TARGET): $(SOURCES) $(HEADERS)
 	$(CC) $(CFLAGS) -o $(TARGET) $(SOURCES)
 
 run: $(TARGET)
-	./$(TARGET) config.json
+	./$(TARGET) config.json density_matrix.dat expectations.dat
 
 run_txt: $(TARGET)
-	./$(TARGET) config.txt
+	./$(TARGET) config.txt density_matrix.dat expectations.dat
 
 clean:
-	rm -f $(TARGET)
+	rm -f $(TARGET) density_matrix.dat expectations.dat
 
 .PHONY: all clean run run_txt

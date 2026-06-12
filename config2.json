@@ -1,0 +1,11 @@
+{
+  "num_qubits": 1,
+  "qubits": [
+    {
+      "omega": 3.1,
+      "E": 0.5
+    }
+  ],
+  "disturbances": [
+  ]
+}

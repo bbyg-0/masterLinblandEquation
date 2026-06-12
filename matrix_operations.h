@@ -31,4 +31,7 @@ int is_hermitian(Complex* A, int size, float tolerance);
 /* Create Lindblad operator based on disturbance type */
 Complex* create_lindblad_operator(DisturbanceType type, int qubit_idx, int n_qubits);
 
+/* Create single qubit operator for N-qubit system */
+Complex* create_single_qubit_operator(Complex* op, int qubit_idx, int n_qubits);
+
 #endif

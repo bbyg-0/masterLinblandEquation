@@ -283,3 +283,54 @@ void print_config(const LindbladConfig* config) {
     }
     printf("============================================\n");
 }
+
+/* Parse custom initial state from JSON */
+static int parse_initial_state(const char* json, QubitInfo* qubit) {
+    /* Look for "initial_state" or "rho" key */
+    char* state_start = strstr(json, "\"initial_state\"");
+    if (!state_start) {
+        state_start = strstr(json, "\"rho\"");
+    }
+    if (!state_start) return -1;
+    
+    char* array_start = strchr(state_start, '[');
+    if (!array_start) return -1;
+    
+    /* Parse [[a,b],[c,d]] format */
+    float values[4] = {0};
+    int count = 0;
+    char* current = array_start;
+    
+    while (count < 4 && current) {
+        current = strchr(current, '[');
+        if (!current) break;
+        current++;
+        
+        /* Parse two numbers */
+        for (int i = 0; i < 2 && count < 4; i++) {
+            char* endptr;
+            values[count] = strtof(current, &endptr);
+            if (endptr == current) break;
+            current = endptr;
+            count++;
+            
+            /* Skip comma */
+            current = strchr(current, ',');
+            if (current) current++;
+        }
+        
+        /* Skip to next row */
+        current = strchr(current, ']');
+        if (current) current++;
+    }
+    
+    if (count == 4) {
+        qubit->rho[0].real = values[0]; qubit->rho[0].imag = 0;
+        qubit->rho[1].real = values[1]; qubit->rho[1].imag = 0;
+        qubit->rho[2].real = values[2]; qubit->rho[2].imag = 0;
+        qubit->rho[3].real = values[3]; qubit->rho[3].imag = 0;
+        return 0;
+    }
+    
+    return -1;
+}

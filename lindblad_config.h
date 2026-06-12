@@ -36,8 +36,10 @@ typedef struct {
 typedef struct {
     float omega;        /* Qubit frequency */
     float E;           /* Energy/amplitude parameter */
-    Complex rho[4];    /* 2x2 density matrix for initial state {{0.5,0.5},{0.5,0.5}} */
+    Complex rho[4];    /* 2x2 density matrix */
+    int has_custom_state; /* Flag for custom initial state */
 } QubitInfo;
+
 
 /* Main configuration structure */
 typedef struct {

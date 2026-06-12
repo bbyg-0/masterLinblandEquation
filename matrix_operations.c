@@ -120,67 +120,47 @@ int is_hermitian(Complex* A, int size, float tolerance) {
     return 1; /* Is Hermitian */
 }
 
-/* Create Lindblad operator based on disturbance type */
 Complex* create_lindblad_operator(DisturbanceType type, int qubit_idx, int n_qubits) {
     int dim = 1 << n_qubits;
-    Complex* L = (Complex*)calloc(dim * dim, sizeof(Complex));
-    
+    Complex* L = calloc(dim * dim, sizeof(Complex));
     if (!L) return NULL;
-    
-    /* Create single-qubit operator first */
-    Complex single_qubit_op[4] = {0};
-    
-    switch(type) {
-        case DAMPING:  /* σ- = |0><1| */
-            single_qubit_op[1].real = 1.0f;  /* |0><1| */
+
+    // Single‑qubit operator for the given disturbance type
+    Complex op[4] = {0};
+    switch (type) {
+        case DAMPING:      // σ⁻ = |0><1|
+            op[1].real = 1.0f;
             break;
-            
-        case DEPHASING:  /* σz */
-            single_qubit_op[0].real = 1.0f;
-            single_qubit_op[3].real = -1.0f;
+        case DEPHASING:    // σ_z
+            op[0].real = 1.0f;
+            op[3].real = -1.0f;
             break;
-            
-        case DEPOLARIZING:  /* σx for simplicity */
-            single_qubit_op[1].real = 1.0f;
-            single_qubit_op[2].real = 1.0f;
-            break;
-            
+        case DEPOLARIZING: // For depolarizing, we will handle separately later (three ops)
+            // Return NULL and handle in the caller by splitting into X,Y,Z
+            free(L);
+            return NULL;
         default:
             free(L);
             return NULL;
     }
-    
-    /* Build full operator: I ⊗ I ⊗ ... ⊗ L_q ⊗ ... ⊗ I */
-    Complex I[4] = {{1,0}, {0,0}, {0,0}, {1,0}};
-    
-    Complex* current = NULL;
-    
-    for (int i = 0; i < n_qubits; i++) {
-        if (i == 0) {
-            current = (Complex*)malloc(4 * sizeof(Complex));
-            if (i == qubit_idx)
-                memcpy(current, single_qubit_op, 4 * sizeof(Complex));
-            else
-                memcpy(current, I, 4 * sizeof(Complex));
-        } else {
-            int current_size = 1 << i;
-            int new_size = current_size * 2;
-            int new_total = new_size * new_size;
-            
-            Complex* new_current = (Complex*)calloc(new_total, sizeof(Complex));
-            Complex* next_op = (i == qubit_idx) ? single_qubit_op : I;
-            
-            tensor_product(current, current_size, next_op, 2, new_current);
-            
-            free(current);
-            current = new_current;
+
+    // Direct basis‑state filling
+    for (int row = 0; row < dim; row++) {
+        for (int col = 0; col < dim; col++) {
+            int row_bit = (row >> qubit_idx) & 1;
+            int col_bit = (col >> qubit_idx) & 1;
+            int match = 1;
+            for (int q = 0; q < n_qubits; q++) {
+                if (q == qubit_idx) continue;
+                if (((row >> q) & 1) != ((col >> q) & 1)) {
+                    match = 0;
+                    break;
+                }
+            }
+            if (match) {
+                L[row * dim + col] = op[row_bit * 2 + col_bit];
+            }
         }
     }
-    
-    if (current) {
-        memcpy(L, current, dim * dim * sizeof(Complex));
-        free(current);
-    }
-    
     return L;
 }

@@ -52,85 +52,77 @@ void tensor_product(Complex* A, int N_A, Complex* B, int N_B, Complex* C) {
 Complex* create_hamiltonian(float* omegas, float* Es, int n_qubits) {
     int dim = 1 << n_qubits;
     int total_size = dim * dim;
-    
-    Complex* H_total = (Complex*)calloc(total_size, sizeof(Complex));
+
+    Complex* H_total = calloc(total_size, sizeof(Complex));
     if (!H_total) return NULL;
-    
-    Complex* I = (Complex*)malloc(4 * sizeof(Complex));
-    memcpy(I, I2, 4 * sizeof(Complex));
-    
+
+    // Inline identity — no dependency on global I2
+    Complex ident[4] = {{1,0},{0,0},{0,0},{1,0}};
+
     for (int q = 0; q < n_qubits; q++) {
         Complex* H_q = single_qubit_hamiltonian(omegas[q], Es[q]);
-        Complex* term = NULL;
-        
-        for (int i = 0; i < n_qubits; i++) {
-            if (i == 0) {
-                term = (Complex*)malloc(4 * sizeof(Complex));
-                if (i == q)
-                    memcpy(term, H_q, 4 * sizeof(Complex));
-                else
-                    memcpy(term, I, 4 * sizeof(Complex));
-            } else {
-                int current_size = 1 << i;
-                int new_size = current_size * 2;
-                int new_total = new_size * new_size;
-                
-                Complex* new_term = (Complex*)calloc(new_total, sizeof(Complex));
-                Complex* mat2 = (i == q) ? H_q : I;
-                
-                tensor_product(term, current_size, mat2, 2, new_term);
-                
-                free(term);
-                term = new_term;
-            }
+        if (!H_q) { free(H_total); return NULL; }
+
+        Complex* term = malloc(4 * sizeof(Complex));
+        if (!term) { free(H_q); free(H_total); return NULL; }
+        memcpy(term, (0 == q) ? H_q : ident, 4 * sizeof(Complex));
+
+        for (int i = 1; i < n_qubits; i++) {
+            int cur  = 1 << i;           // side length of `term`
+            int new_total = cur * 2 * cur * 2;
+
+            Complex* new_term = calloc(new_total, sizeof(Complex));
+            if (!new_term) { free(term); free(H_q); free(H_total); return NULL; }
+
+            Complex* mat2 = (i == q) ? H_q : ident;
+            tensor_product(term, cur, mat2, 2, new_term);
+
+            free(term);
+            term = new_term;
         }
-        
-        /* Add term to total Hamiltonian */
+
         for (int i = 0; i < total_size; i++) {
             H_total[i].real += term[i].real;
             H_total[i].imag += term[i].imag;
         }
-        
+
         free(term);
         free(H_q);
     }
-    
-    free(I);
+
     return H_total;
 }
 
 /* Create full density matrix from individual qubit states */
 Complex* create_full_density_matrix(LindbladConfig* config) {
     int n_qubits = config->num_qubits;
+    if (n_qubits <= 0) return NULL;
+
     int dim = 1 << n_qubits;
     int total_size = dim * dim;
-    
-    Complex* rho_total = (Complex*)calloc(total_size, sizeof(Complex));
-    if (!rho_total) return NULL;
-    
-    /* Start with first qubit's density matrix */
-    Complex* current = (Complex*)malloc(4 * sizeof(Complex));
+
+    // NOTE: assumes product state rho = rho_0 ⊗ rho_1 ⊗ ... ⊗ rho_{n-1}
+    Complex* current = malloc(4 * sizeof(Complex));
+    if (!current) return NULL;
     memcpy(current, config->qubits[0].rho, 4 * sizeof(Complex));
     int current_size = 2;
-    
-    /* Tensor product with remaining qubits */
+
     for (int q = 1; q < n_qubits; q++) {
-        int new_size = current_size * 2;
+        int new_size  = current_size * 2;
         int new_total = new_size * new_size;
-        
-        Complex* new_rho = (Complex*)calloc(new_total, sizeof(Complex));
-        
+
+        Complex* new_rho = calloc(new_total, sizeof(Complex));
+        if (!new_rho) { free(current); return NULL; }
+
         tensor_product(current, current_size, config->qubits[q].rho, 2, new_rho);
-        
+
         free(current);
         current = new_rho;
         current_size = new_size;
     }
-    
-    memcpy(rho_total, current, total_size * sizeof(Complex));
-    free(current);
-    
-    return rho_total;
+
+    // current is now the full dim x dim density matrix
+    return current;
 }
 
 /* Print matrix */
